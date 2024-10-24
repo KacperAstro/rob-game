@@ -3,6 +3,7 @@ use bevy::{
 };
 use bevy_rapier2d::prelude::*;
 
+// Physics base
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
