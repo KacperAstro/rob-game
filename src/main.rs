@@ -6,11 +6,11 @@ use bevy_rapier2d::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(10.0))
-        // .add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
+        .add_plugins(RapierDebugRenderPlugin::default())
         .add_systems(Startup, setup)
-        .add_systems(FixedUpdate, (apply_kinematics/* , update_camera*/))
-        .add_systems(Update, (animate_sprites, get_player_input))
+        .add_systems(FixedUpdate, (get_player_input,))
+        .add_systems(Update, animate_sprites)
         .run();
 }
 
@@ -48,17 +48,7 @@ struct FaceDirection(FacingDirection);
 struct MoveSettings {
     is_walking: bool,
     speed: f32,
-    accel: f32,
-    fric: f32,
 }
-
-#[derive(Component)]
-struct CameraValues {
-    lerp_factor: f32,
-}
-
-#[derive(Component)]
-struct Velocity(Vec2);
 
 #[derive(Component)]
 struct AnimationInd {
@@ -96,12 +86,6 @@ fn setup(
             down: 48,
         },
     };
-    // Camera Spawn
-    commands.spawn((
-        Camera2dBundle::default(),
-        MainCameraTag,
-        CameraValues { lerp_factor: 2.0 },
-    ));
 
     // UI
     commands.spawn(
@@ -123,8 +107,8 @@ fn setup(
             ..default()
         },
         RigidBody::Fixed,
-        Collider::cuboid(22.5, 22.5),
         ColliderTag,
+        Collider::cuboid(22.5, 22.5),
     ));
 
     // Box
@@ -139,41 +123,62 @@ fn setup(
             ..default()
         },
         RigidBody::Fixed,
-        Collider::cuboid(22.05, 22.5),
         ColliderTag,
+        Collider::cuboid(22.5, 22.5),
     ));
 
+    let camera = commands
+        .spawn((
+            Camera2dBundle {
+                transform: Transform::from_scale(Vec3::splat(1. / 3.)),
+                ..default()
+            },
+            MainCameraTag,
+        ))
+        .id();
+
     // Player
-    commands.spawn((
-        SpriteBundle {
-            transform: Transform::from_scale(Vec3::splat(3.)),
-            texture: sprite_texture,
-            ..default()
-        },
-        TextureAtlas {
-            layout: texture_atlas_layouts,
-            index: 0,
-        },
-        animation_indices,
-        AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
-        PlayerTag,
-        MoveSettings {
-            is_walking: false,
-            speed: 5.0,
-            accel: 20.0,
-            fric: 15.0,
-        },
-        FaceDirection(FacingDirection::DOWN),
-        Velocity(Vec2::ZERO),
-        RigidBody::KinematicPositionBased,
-        Collider::ball(7.0),
-        KinematicCharacterController::default(),
-    ));
+    let player = commands
+        .spawn((
+            SpriteBundle {
+                transform: Transform::from_scale(Vec3::splat(3.)),
+                texture: sprite_texture,
+                ..default()
+            },
+            TextureAtlas {
+                layout: texture_atlas_layouts,
+                index: 0,
+            },
+            animation_indices,
+            AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+            PlayerTag,
+            MoveSettings {
+                is_walking: false,
+                speed: 150.0,
+            },
+            FaceDirection(FacingDirection::DOWN),
+            Velocity::zero(),
+            GravityScale(0.),
+            LockedAxes::ROTATION_LOCKED,
+            RigidBody::Dynamic,
+            Damping {
+                linear_damping: 10.,
+                ..default()
+            },
+            ExternalImpulse::default(),
+            Collider::ball(8.),
+            ColliderMassProperties::Mass(5.),
+        ))
+        .id();
+
+    commands.entity(player).add_child(camera);
 }
 
 fn get_player_input(
-    mut player_vel: Query<(&mut Velocity, &mut MoveSettings, &mut FaceDirection), With<PlayerTag>>,
-    time: Res<Time>,
+    mut player_vel: Query<
+        (&mut ExternalImpulse, &mut MoveSettings, &mut FaceDirection),
+        With<PlayerTag>,
+    >,
     keyboard: Res<ButtonInput<KeyCode>>,
 ) {
     let (mut player_vel, mut move_settings, mut face_direction) = player_vel.single_mut();
@@ -200,23 +205,12 @@ fn get_player_input(
 
     if input_vector != Vec2::ZERO {
         move_settings.is_walking = true;
-        player_vel.0 = player_vel.0.lerp(
-            input_vector * move_settings.speed,
-            move_settings.accel * time.delta_seconds(),
-        );
     } else {
         move_settings.is_walking = false;
-
-        player_vel.0 = player_vel
-            .0
-            .lerp(Vec2::ZERO, move_settings.fric * time.delta_seconds());
     }
-}
 
-fn apply_kinematics(mut entity_transforms: Query<(&mut KinematicCharacterController, &Velocity)>) {
-    for (mut transform, vel) in &mut entity_transforms {
-        transform.translation = Some(vel.0);
-    }
+    player_vel.impulse = input_vector * move_settings.speed;
+    player_vel.torque_impulse = 200.0;
 }
 
 fn animate_sprites(
@@ -253,20 +247,4 @@ fn animate_sprites(
             }
         }
     }
-}
-
-fn update_camera(
-    mut camera: Query<(&mut Transform, &CameraValues), (With<MainCameraTag>, Without<PlayerTag>)>,
-    player: Query<&Transform, (With<PlayerTag>, Without<MainCameraTag>)>,
-    time: Res<Time>,
-) {
-    let (mut camera_transform, camera_val) = camera.single_mut();
-    let player_transform = player.single();
-
-    let Vec3 { x, y, .. } = player_transform.translation;
-    let dir = Vec3::new(x, y, camera_transform.translation.z);
-
-    camera_transform.translation = camera_transform
-        .translation
-        .lerp(dir, time.delta_seconds() * camera_val.lerp_factor);
 }
